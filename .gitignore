@@ -1,0 +1,52 @@
+# Dataset (too large for git, distributed separately)
+EMBRIO GRADE DATASET/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Model artifacts & runtime outputs
+outputs/checkpoints/*
+!outputs/checkpoints/.gitkeep
+outputs/figures/*
+!outputs/figures/.gitkeep
+outputs/logs/*
+!outputs/logs/.gitkeep
+*.pt
+*.pth
+*.ckpt
+*.h5
+
+# Database / local state
+*.sqlite
+*.sqlite3
+*.db
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

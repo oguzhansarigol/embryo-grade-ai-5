@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Tahmin Geçmişi{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">Tahmin Geçmişi</h3>
+  <div>
+    <a href="{{ url_for('export_csv') }}" class="btn btn-sm btn-outline-primary">CSV indir</a>
+    <a href="{{ url_for('export_pdf') }}" class="btn btn-sm btn-outline-primary">PDF indir</a>
+  </div>
+</div>
+
+<div class="table-responsive">
+<table class="table table-sm table-striped align-middle">
+  <thead>
+    <tr>
+      <th>ID</th><th>Zaman (UTC)</th><th>Görüntü</th><th>Tahmin</th>
+      <th>Güven</th><th>Uyarı</th>
+      <th>Gerçek sınıf</th><th>Gebelik sonucu</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td><small>{{ r.timestamp }}</small></td>
+      <td><small>{{ r.image_filename }}</small></td>
+      <td><span class="badge bg-primary">{{ r.predicted_class }}</span></td>
+      <td>{{ "%.2f"|format(r.confidence) }}</td>
+      <td>
+        {% if r.warning_flag %}
+          <span class="badge bg-danger">düşük</span>
+        {% else %}
+          <span class="badge bg-success">yüksek</span>
+        {% endif %}
+      </td>
+      <td>{{ r.actual_class or "-" }}</td>
+      <td>{{ r.pregnancy_outcome or "-" }}</td>
+      <td>
+        <form method="post"
+              action="{{ url_for('update_followup', pred_id=r.id) }}"
+              class="d-flex gap-1">
+          <input name="actual_class" class="form-control form-control-sm"
+                 placeholder="ör. 4AA" value="{{ r.actual_class or '' }}" size="6">
+          <input name="pregnancy_outcome" class="form-control form-control-sm"
+                 placeholder="ör. pozitif" value="{{ r.pregnancy_outcome or '' }}" size="8">
+          <button class="btn btn-sm btn-outline-secondary">Kaydet</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
