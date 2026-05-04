@@ -1,4 +1,4 @@
-"""Dataset, augmentation transforms, stratified k-fold splits, class weighting."""
+"""Dataset, augmentation transforms, stratified train/val/test split, class weighting."""
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.utils.class_weight import compute_class_weight
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -83,10 +83,48 @@ def build_transforms(train: bool) -> A.Compose:
     ])
 
 
-def get_kfold_splits(labels: np.ndarray, k: int = cfg.K_FOLDS, seed: int = cfg.SEED):
-    """Yield (train_idx, val_idx) stratified by label across k folds."""
-    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
-    return list(skf.split(np.zeros(len(labels)), labels))
+def get_train_val_test_split(
+    labels: np.ndarray,
+    val_frac: float = cfg.VAL_FRAC,
+    test_frac: float = cfg.TEST_FRAC,
+    seed: int = cfg.SEED,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Two-stage stratified split → (train_idx, val_idx, test_idx).
+
+    1) Hold out `test_frac` of N as test (stratified). Test is touched ONLY at
+       final reporting time — never during early stopping or hyperparameter
+       selection.
+    2) Within the remaining (1 - test_frac), hold out `val_frac / (1 - test_frac)`
+       as val (stratified). The rest is train.
+
+    Deterministic with a fixed `seed`.
+    """
+    idx_all = np.arange(len(labels))
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_frac, random_state=seed)
+    trainval_idx, test_idx = next(sss1.split(idx_all, labels))
+
+    val_rel = val_frac / (1.0 - test_frac)
+    sss2 = StratifiedShuffleSplit(n_splits=1, test_size=val_rel, random_state=seed)
+    sub_tr, sub_vl = next(sss2.split(trainval_idx, labels[trainval_idx]))
+    train_idx = trainval_idx[sub_tr]
+    val_idx = trainval_idx[sub_vl]
+    return train_idx, val_idx, test_idx
+
+
+def print_split_distribution(labels: np.ndarray, train_idx: np.ndarray,
+                             val_idx: np.ndarray, test_idx: np.ndarray) -> None:
+    """Print per-class counts and sanity-check that no class collapses to <2 in test."""
+    print(f"{'Class':<10} {'train':>6} {'val':>5} {'test':>5} {'total':>6}")
+    for i, cls in enumerate(cfg.CLASSES):
+        n_train = int((labels[train_idx] == i).sum())
+        n_val = int((labels[val_idx] == i).sum())
+        n_test = int((labels[test_idx] == i).sum())
+        print(f"{cls:<10} {n_train:>6} {n_val:>5} {n_test:>5} {n_train + n_val + n_test:>6}")
+        if n_test < 2:
+            raise RuntimeError(
+                f"Stratification produced <2 test samples for class '{cls}'. "
+                f"Check seed or class balance."
+            )
 
 
 def get_class_weights(labels: np.ndarray) -> torch.Tensor:
@@ -109,7 +147,7 @@ def build_sampler(labels: np.ndarray) -> WeightedRandomSampler:
 
 def build_dataloaders(train_idx, val_idx, full_dataset_train: EmbryoDataset,
                       full_dataset_eval: EmbryoDataset, use_sampler: bool = True):
-    """Wrap k-fold indices into (train, val) DataLoaders.
+    """Wrap split indices into (train, val) DataLoaders.
 
     Two dataset instances are passed so train/val can use different transforms
     even when sharing the same underlying file list.
@@ -137,3 +175,16 @@ def build_dataloaders(train_idx, val_idx, full_dataset_train: EmbryoDataset,
         pin_memory=True,
     )
     return train_loader, val_loader
+
+
+def build_test_loader(test_idx: np.ndarray,
+                      full_dataset_eval: EmbryoDataset) -> DataLoader:
+    """Held-out test loader: deterministic order, no augmentation, no sampler."""
+    test_subset = Subset(full_dataset_eval, test_idx.tolist())
+    return DataLoader(
+        test_subset,
+        batch_size=cfg.BATCH_SIZE,
+        shuffle=False,
+        num_workers=cfg.NUM_WORKERS,
+        pin_memory=True,
+    )

@@ -1,4 +1,4 @@
-"""Two-stage k-fold training loop with MixUp, class weights, AMP, and early stopping."""
+"""Two-stage single training loop with class weights, AMP, and early stopping (70/15/15)."""
 import csv
 import random
 import time
@@ -18,10 +18,31 @@ from tqdm import tqdm
 
 from . import config as cfg
 from .data import (
-    EmbryoDataset, build_transforms, get_kfold_splits,
-    get_class_weights, build_dataloaders,
+    EmbryoDataset, build_transforms, get_train_val_test_split,
+    print_split_distribution, get_class_weights, build_dataloaders,
 )
 from .model import build_model, freeze_backbone, unfreeze_all, get_param_groups
+
+
+def _purge_legacy_kfold_artifacts() -> None:
+    """Remove leftover fold_* artefacts from earlier 5-fold CV runs.
+
+    Keeps `lc_*` learning-curve files intact (different glob pattern).
+    """
+    targets: List[Path] = []
+    targets += list(cfg.CHECKPOINT_DIR.glob("fold_*.pth"))
+    targets += list(cfg.LOG_DIR.glob("fold_*_history.csv"))
+    targets += list(cfg.FIGURE_DIR.glob("confusion_matrix_fold_*.png"))
+    targets += list(cfg.FIGURE_DIR.glob("history_fold_*.png"))
+    for p in [cfg.REPORT_DIR / "fold_metrics.csv",
+              cfg.OUTPUT_DIR / "predictions.csv"]:
+        if p.exists():
+            targets.append(p)
+    for p in targets:
+        try:
+            p.unlink()
+        except Exception:
+            pass
 
 
 def set_seed(seed: int = cfg.SEED) -> None:
@@ -117,12 +138,19 @@ def _lr_of(optimizer, name: str) -> float:
     return 0.0
 
 
-def train_one_fold(fold_idx: int, train_idx: np.ndarray, val_idx: np.ndarray,
-                   ds_train: EmbryoDataset, ds_eval: EmbryoDataset,
-                   device: torch.device, log_dir: Path = cfg.LOG_DIR,
-                   ckpt_dir: Path = cfg.CHECKPOINT_DIR) -> Dict:
-    """Run phase-1 (head warmup) + phase-2 (full fine-tune) for a single fold."""
-    print(f"\n=== Fold {fold_idx + 1}/{cfg.K_FOLDS} ===")
+def train_single_run(train_idx: np.ndarray, val_idx: np.ndarray,
+                     ds_train: EmbryoDataset, ds_eval: EmbryoDataset,
+                     device: torch.device, log_dir: Path = cfg.LOG_DIR,
+                     ckpt_dir: Path = cfg.CHECKPOINT_DIR,
+                     run_name: str = "") -> Dict:
+    """Run phase-1 (head warmup) + phase-2 (full fine-tune) on a single split.
+
+    `run_name`: optional suffix to disambiguate artefacts when this function is
+    called repeatedly (e.g. by `learning_curve()`). Empty string => canonical
+    `best_model.pth` / `history.csv` names.
+    """
+    label = run_name if run_name else "main"
+    print(f"\n=== Single training run ({label}) — train/val from 70/15 stratified split ===")
     train_loader, val_loader = build_dataloaders(train_idx, val_idx, ds_train, ds_eval)
 
     train_labels = ds_train.get_labels()[train_idx]
@@ -208,16 +236,21 @@ def train_one_fold(fold_idx: int, train_idx: np.ndarray, val_idx: np.ndarray,
               f"{time.time()-t0:.1f}s")
 
     # ---------- Save artefacts ----------
-    log_path = log_dir / f"fold_{fold_idx}_history.csv"
+    history_name = f"history_{run_name}.csv" if run_name else "history.csv"
+    ckpt_name = f"best_{run_name}.pth" if run_name else "best_model.pth"
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    log_path = log_dir / history_name
     with open(log_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(asdict(history[0]).keys()))
         writer.writeheader()
         for em in history:
             writer.writerow(asdict(em))
 
-    ckpt_path = ckpt_dir / f"fold_{fold_idx}_best.pth"
+    ckpt_path = ckpt_dir / ckpt_name
     torch.save({
-        "fold": fold_idx,
         "state_dict": best_state,
         "best_val_loss": best_val_loss,
         "classes": cfg.CLASSES,
@@ -225,13 +258,16 @@ def train_one_fold(fold_idx: int, train_idx: np.ndarray, val_idx: np.ndarray,
         "img_size": cfg.IMG_SIZE,
     }, ckpt_path)
 
-    return {"fold": fold_idx, "best_val_loss": best_val_loss,
-            "history_path": str(log_path), "checkpoint_path": str(ckpt_path),
-            "val_idx": val_idx.tolist()}
+    return {
+        "best_val_loss": best_val_loss,
+        "history_path": str(log_path),
+        "checkpoint_path": str(ckpt_path),
+    }
 
 
-def run_kfold(device: Optional[torch.device] = None) -> List[Dict]:
-    """Train all K folds end-to-end, returning a summary dict per fold."""
+def run_training(device: Optional[torch.device] = None) -> Dict:
+    """End-to-end single training run on a stratified 70/15/15 split."""
+    _purge_legacy_kfold_artifacts()
     set_seed()
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -241,10 +277,14 @@ def run_kfold(device: Optional[torch.device] = None) -> List[Dict]:
     labels = ds_train.get_labels()
     print(f"Total samples: {len(ds_train)} | classes: {cfg.CLASSES}")
 
-    splits = get_kfold_splits(labels)
-    fold_results = []
-    for fold_idx, (train_idx, val_idx) in enumerate(splits):
-        result = train_one_fold(fold_idx, train_idx, val_idx, ds_train, ds_eval, device)
-        fold_results.append(result)
+    train_idx, val_idx, test_idx = get_train_val_test_split(labels)
+    print_split_distribution(labels, train_idx, val_idx, test_idx)
 
-    return fold_results
+    result = train_single_run(train_idx, val_idx, ds_train, ds_eval, device,
+                              cfg.LOG_DIR, cfg.CHECKPOINT_DIR)
+    result.update({
+        "train_idx": train_idx.tolist(),
+        "val_idx": val_idx.tolist(),
+        "test_idx": test_idx.tolist(),
+    })
+    return result

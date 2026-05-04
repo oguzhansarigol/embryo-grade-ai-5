@@ -16,7 +16,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 
 from . import config as cfg
-from .data import EmbryoDataset, build_transforms, build_dataloaders
+from .data import EmbryoDataset, build_transforms, build_test_loader
 from .model import build_model
 
 
@@ -115,85 +115,80 @@ def plot_roc_curves(y_true: np.ndarray, probs: np.ndarray, save_path: Path) -> D
 
 
 # ---------------------------------------------------------------------------
-# Cross-fold aggregation
+# Single-run test evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_all_folds(fold_results: List[Dict], device: torch.device) -> Dict:
-    """Re-run each fold's checkpoint on its validation set, aggregate metrics."""
+def evaluate_test(train_result: Dict, device: torch.device) -> Dict:
+    """Evaluate the single training run's checkpoint on the held-out test set.
+
+    Produces:
+      - figures/confusion_matrix_test.png       (raw counts)
+      - figures/confusion_matrix_test_norm.png  (row-normalised)
+      - figures/roc_curves.png                  (one-vs-rest, per class AUC)
+      - figures/history.png                     (train/val acc-loss vs epoch)
+      - reports/metrics_summary.json
+      - outputs/predictions_test.csv            (consumed by morphology.py)
+    """
     ds_eval = EmbryoDataset(transform=build_transforms(train=False))
-    ds_train_for_split = EmbryoDataset(transform=build_transforms(train=False))
+    test_idx = np.array(train_result["test_idx"])
+    test_loader = build_test_loader(test_idx, ds_eval)
 
-    all_true, all_pred, all_probs, all_paths = [], [], [], []
-    fold_metrics = []
+    model = load_checkpoint(Path(train_result["checkpoint_path"]), device)
+    y_true, y_pred, probs, paths = predict_loader(model, test_loader, device)
 
-    for fr in fold_results:
-        val_idx = np.array(fr["val_idx"])
-        # train_idx is just the complement; we don't need it for eval-only
-        train_idx = np.setdiff1d(np.arange(len(ds_eval)), val_idx)
-        _, val_loader = build_dataloaders(train_idx, val_idx, ds_train_for_split,
-                                          ds_eval, use_sampler=False)
-        model = load_checkpoint(Path(fr["checkpoint_path"]), device)
-        y_true, y_pred, probs, paths = predict_loader(model, val_loader, device)
+    acc = accuracy_score(y_true, y_pred)
+    prec, rec, f1, _ = precision_recall_fscore_support(
+        y_true, y_pred, average="weighted", zero_division=0)
 
-        acc = accuracy_score(y_true, y_pred)
-        prec, rec, f1, _ = precision_recall_fscore_support(
-            y_true, y_pred, average="weighted", zero_division=0)
-        fold_metrics.append({
-            "fold": fr["fold"], "accuracy": acc,
-            "precision_w": prec, "recall_w": rec, "f1_w": f1,
-            "best_val_loss": fr["best_val_loss"],
-        })
-        plot_confusion_matrix(
-            y_true, y_pred,
-            cfg.FIGURE_DIR / f"confusion_matrix_fold_{fr['fold']}.png",
-            title=f"Confusion Matrix — Fold {fr['fold']}",
-        )
-        plot_history(Path(fr["history_path"]),
-                     cfg.FIGURE_DIR / f"history_fold_{fr['fold']}.png")
-
-        all_true.append(y_true); all_pred.append(y_pred)
-        all_probs.append(probs); all_paths.extend(paths)
-
-    y_true = np.concatenate(all_true)
-    y_pred = np.concatenate(all_pred)
-    probs = np.concatenate(all_probs)
-
-    overall_cm = plot_confusion_matrix(
-        y_true, y_pred, cfg.FIGURE_DIR / "confusion_matrix_overall.png",
-        title="Overall Confusion Matrix (5-fold CV pooled)",
+    cm = plot_confusion_matrix(
+        y_true, y_pred, cfg.FIGURE_DIR / "confusion_matrix_test.png",
+        title="Confusion Matrix — Test (15%)",
     )
     plot_confusion_matrix(
-        y_true, y_pred, cfg.FIGURE_DIR / "confusion_matrix_overall_norm.png",
-        title="Overall Confusion Matrix (normalised)", normalize=True,
+        y_true, y_pred, cfg.FIGURE_DIR / "confusion_matrix_test_norm.png",
+        title="Confusion Matrix — Test (normalised)", normalize=True,
     )
     aucs = plot_roc_curves(y_true, probs, cfg.FIGURE_DIR / "roc_curves.png")
+    plot_history(Path(train_result["history_path"]),
+                 cfg.FIGURE_DIR / "history.png")
 
     report = classification_report(
         y_true, y_pred, target_names=cfg.CLASSES,
         output_dict=True, zero_division=0,
     )
 
-    df_folds = pd.DataFrame(fold_metrics)
     summary = {
-        "per_fold": fold_metrics,
-        "fold_mean": df_folds[["accuracy", "precision_w", "recall_w", "f1_w"]].mean().to_dict(),
-        "fold_std": df_folds[["accuracy", "precision_w", "recall_w", "f1_w"]].std().to_dict(),
-        "overall_classification_report": report,
-        "overall_confusion_matrix": overall_cm.tolist(),
+        "split": {
+            "train_frac": cfg.TRAIN_FRAC,
+            "val_frac": cfg.VAL_FRAC,
+            "test_frac": cfg.TEST_FRAC,
+            "seed": cfg.SEED,
+            "n_train": len(train_result["train_idx"]),
+            "n_val": len(train_result["val_idx"]),
+            "n_test": len(test_idx),
+        },
+        "test_metrics": {
+            "accuracy": acc,
+            "precision_w": prec,
+            "recall_w": rec,
+            "f1_w": f1,
+            "best_val_loss": train_result["best_val_loss"],
+        },
+        "test_classification_report": report,
+        "test_confusion_matrix": cm.tolist(),
         "roc_auc_per_class": aucs,
     }
 
     with open(cfg.REPORT_DIR / "metrics_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
-    df_folds.to_csv(cfg.REPORT_DIR / "fold_metrics.csv", index=False)
 
     pd.DataFrame({
-        "image_path": all_paths,
+        "image_path": paths,
         "y_true": [cfg.IDX_TO_CLASS[i] for i in y_true],
         "y_pred": [cfg.IDX_TO_CLASS[i] for i in y_pred],
         "confidence": probs.max(axis=1),
         **{f"prob_{cls}": probs[:, i] for i, cls in enumerate(cfg.CLASSES)},
-    }).to_csv(cfg.OUTPUT_DIR / "predictions.csv", index=False)
+    }).to_csv(cfg.OUTPUT_DIR / "predictions_test.csv", index=False)
 
     return summary
 
@@ -226,9 +221,9 @@ def _stratified_subsample(indices: np.ndarray, labels_at_indices: np.ndarray,
 
 def learning_curve(device: torch.device, fractions=(0.25, 0.5, 0.75, 1.0),
                    epochs: int = 15) -> pd.DataFrame:
-    """Train on increasing fractions of one fold's training data; plot val acc."""
+    """Train on increasing fractions of training data; plot val acc."""
     from sklearn.model_selection import StratifiedShuffleSplit
-    from .train import train_one_fold
+    from .train import train_single_run
 
     ds_train = EmbryoDataset(transform=build_transforms(train=True))
     ds_eval = EmbryoDataset(transform=build_transforms(train=False))
@@ -252,10 +247,11 @@ def learning_curve(device: torch.device, fractions=(0.25, 0.5, 0.75, 1.0),
             )
 
             print(f"\n[learning curve] fraction={frac:.2f} n_train={len(sub_train_idx)}")
-            res = train_one_fold(
-                fold_idx=int(frac * 100), train_idx=sub_train_idx, val_idx=val_idx,
+            res = train_single_run(
+                train_idx=sub_train_idx, val_idx=val_idx,
                 ds_train=ds_train, ds_eval=ds_eval, device=device,
                 log_dir=cfg.LOG_DIR, ckpt_dir=cfg.CHECKPOINT_DIR / "lc_tmp",
+                run_name=f"lc_{int(frac * 100)}",
             )
             df = pd.read_csv(res["history_path"])
             rows.append({"fraction": frac, "n_train": len(sub_train_idx),
@@ -280,16 +276,13 @@ def learning_curve(device: torch.device, fractions=(0.25, 0.5, 0.75, 1.0),
     return df
 
 
-def select_best_fold(fold_metrics: List[Dict]) -> int:
-    """Pick the fold with the highest weighted F1; ties broken by lowest val loss."""
-    best = max(fold_metrics, key=lambda m: (m["f1_w"], -m["best_val_loss"]))
-    return best["fold"]
+def export_final_model() -> Path:
+    """Copy `best_model.pth` -> `final_model.pth` (canonical name).
 
-
-def export_final_model(best_fold: int) -> Path:
-    """Copy the chosen fold's checkpoint as the canonical final model."""
+    Keeps `infer.py` and `app/app.py` unchanged — they consume `final_model.pth`.
+    """
     import shutil
-    src = cfg.CHECKPOINT_DIR / f"fold_{best_fold}_best.pth"
+    src = cfg.CHECKPOINT_DIR / "best_model.pth"
     dst = cfg.CHECKPOINT_DIR / "final_model.pth"
     shutil.copy(src, dst)
     return dst

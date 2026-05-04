@@ -30,7 +30,10 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 
 # --- Training ---
 SEED = 42
-K_FOLDS = 5
+# Stratified train/val/test split (doc §3.2: 70 / 15 / 15)
+TRAIN_FRAC = 0.70
+VAL_FRAC = 0.15
+TEST_FRAC = 0.15
 BATCH_SIZE = 16
 NUM_WORKERS = 2
 

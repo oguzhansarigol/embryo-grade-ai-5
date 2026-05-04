@@ -6,7 +6,7 @@ sistemine göre otomatik değerlendiren derin öğrenme tabanlı bir sistem
 
 - **Model:** ConvNeXt-Base (ImageNet-22k pretrained, transfer learning)
 - **Veri:** 170 .bmp görüntü, 4 sınıf (3AA, 3CC, 4AA, Cleavage)
-- **Strateji:** 5-fold stratified cross-validation, MixUp + class weights, 2 aşamalı eğitim
+- **Strateji:** Stratified 70/15/15 train/val/test split, class weights, 2 aşamalı eğitim
 - **XAI:** Grad-CAM + güven uyarı sistemi + morfolojik özellik raporu
 
 ---
@@ -18,7 +18,7 @@ sistemine göre otomatik değerlendiren derin öğrenme tabanlı bir sistem
 1. **Zip oluştur:** `code-base/` klasörünü (içinde `EMBRIO GRADE DATASET/` dahil) lokalde `code-base.zip` olarak sıkıştır.
 2. **Colab'i aç:** Boş bir Colab oturumu başlat → **Runtime → Change runtime type → T4 GPU** seç.
 3. **Zip'i yükle:** Soldaki dosya panelinden `code-base.zip`'i `/content/` altına sürükle.
-4. **Notebook'u aç:** `code-base/notebooks/DeepEmbryo_Colab.ipynb`'i Colab'de aç (veya GitHub/yerelden yükle) ve hücreleri sırayla çalıştır. Toplam süre ~1.5 saat.
+4. **Notebook'u aç:** `code-base/notebooks/DeepEmbryo_Colab.ipynb`'i Colab'de aç (veya GitHub/yerelden yükle) ve hücreleri sırayla çalıştır. Toplam süre ~30-45 dk.
 5. Notebook'un son hücresi `DeepEmbryo_Teslim.zip` dosyasını otomatik indirecek. Colab oturumu kapatılırsa kaybolur — indirmeyi atlama.
 
 ### B) Sadece çıkarım (yerel makine)
@@ -47,7 +47,7 @@ python app/app.py
 code-base/
 ├── src/                       # ML pipeline
 │   ├── config.py              # Hiperparametreler ve yollar
-│   ├── data.py                # Dataset, transforms, k-fold, class weights
+│   ├── data.py                # Dataset, transforms, train/val/test split, class weights
 │   ├── model.py               # ConvNeXt-Base + freeze utilities
 │   ├── train.py               # 2 aşamalı eğitim (warmup + fine-tune)
 │   ├── evaluate.py            # CM, classification report, learning curve
@@ -61,10 +61,10 @@ code-base/
 ├── notebooks/
 │   └── DeepEmbryo_Colab.ipynb # Uçtan uca Colab eğitim notebook'u
 ├── outputs/                   # Eğitim çıktıları
-│   ├── checkpoints/           # fold_*.pth + final_model.pth
+│   ├── checkpoints/           # best_model.pth + final_model.pth
 │   ├── figures/               # Acc-loss, CM, learning curve, Grad-CAM
 │   ├── reports/               # JSON + CSV metrik raporları
-│   └── logs/                  # fold_*_history.csv
+│   └── logs/                  # history.csv
 ├── requirements.txt
 ├── package.py                 # Teslim arşivi üretici
 └── README.md
@@ -78,6 +78,7 @@ code-base/
 |---|---|
 | §2.2 Ön işleme + augmentation | `src/data.py` (albumentations) |
 | §3.1 ConvNeXt-Base + transfer learning | `src/model.py` |
+| §3.2 Stratified 70/15/15 train/val/test split | `src/data.py::get_train_val_test_split` |
 | §3.2 Early stopping, optimizer, loss | `src/train.py` |
 | §4.1 Accuracy-loss + learning curve | `src/evaluate.py::plot_history`, `learning_curve` |
 | §4.2 Confusion matrix + P/R/F1 | `src/evaluate.py::plot_confusion_matrix`, `classification_report` |
@@ -99,7 +100,7 @@ code-base/
 | Fine-tune epoch | 45 (head LR=1e-4, backbone LR=1e-5) |
 | Optimizer | AdamW, weight_decay=0.05 |
 | Scheduler | CosineAnnealingLR |
-| Loss | CE + class weights + label smoothing 0.1 + MixUp/CutMix |
+| Loss | CE + class weights + label smoothing 0.1 |
 | Early stopping patience | 10 epoch |
-| K-fold | 5 (stratified) |
+| Train/Val/Test | 70 / 15 / 15 (stratified, seed=42) |
 | Güven eşiği (uyarı) | 0.70 |

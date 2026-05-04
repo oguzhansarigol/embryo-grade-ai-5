@@ -24,7 +24,7 @@ INCLUDE = [
     ("outputs/checkpoints/final_model.pth", "model/final_model.pth"),
     ("outputs/figures", "reports/figures"),
     ("outputs/reports", "reports"),
-    ("outputs/predictions.csv", "reports/predictions.csv"),
+    ("outputs/predictions_test.csv", "reports/predictions_test.csv"),
     ("outputs/logs", "reports/training_logs"),
 ]
 
