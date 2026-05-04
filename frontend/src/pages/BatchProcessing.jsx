@@ -7,6 +7,52 @@ export default function BatchProcessing() {
   const [results, setResults] = useState([]);
   const fileInputRef = useRef(null);
 
+  const handleExportPDF = () => {
+    // Exports the backend DB history PDF (same as Reporting page)
+    window.open('http://localhost:5000/api/export.pdf', '_blank');
+  };
+
+  const handleExportCSV = () => {
+    // If we have current batch results, export them client-side.
+    if (results.length > 0) {
+      const header = [
+        'id',
+        'filename',
+        'predicted_class',
+        'confidence',
+        'warning',
+        'image_url',
+        'gradcam_url',
+      ];
+      const lines = [header.join(',')];
+      for (const r of results) {
+        const row = [
+          r.id ?? '',
+          r.filename ?? '',
+          r.predicted_class ?? '',
+          typeof r.confidence === 'number' ? r.confidence.toString() : '',
+          r.warning ? '1' : '0',
+          r.image_url ?? '',
+          r.gradcam_url ?? '',
+        ].map((v) => `"${String(v).replaceAll('"', '""')}"`);
+        lines.push(row.join(','));
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'deepembryo_batch_results.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    // Fallback: export backend DB history CSV (same as Reporting page)
+    window.open('http://localhost:5000/api/export.csv', '_blank');
+  };
+
   const handleFileChange = (e) => {
     if (e.target.files) {
       setFiles(Array.from(e.target.files));
@@ -43,10 +89,18 @@ export default function BatchProcessing() {
           <p className="page-subtitle" style={{marginBottom: 0}}>Birden fazla görseli aynı anda analiz edin.</p>
         </div>
         <div className="flex-gap">
-          <button className="btn-secondary" style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+          <button
+            className="btn-secondary"
+            onClick={handleExportPDF}
+            style={{display: 'flex', alignItems: 'center', gap: '8px'}}
+          >
             <FileText size={16} /> PDF Raporu Oluştur
           </button>
-          <button className="btn-secondary" style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+          <button
+            className="btn-secondary"
+            onClick={handleExportCSV}
+            style={{display: 'flex', alignItems: 'center', gap: '8px'}}
+          >
             <Download size={16} /> CSV Dışa Aktar
           </button>
         </div>

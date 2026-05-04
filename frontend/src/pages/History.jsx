@@ -3,19 +3,49 @@ import { Filter, ChevronRight } from 'lucide-react';
 
 export default function History() {
   const [rows, setRows] = useState([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [classFilter, setClassFilter] = useState('Tümü');
+  const [confidenceFilter, setConfidenceFilter] = useState('Tümü');
+  const [filteredRows, setFilteredRows] = useState([]);
   
   useEffect(() => {
     const fetchHistory = async () => {
       try {
         const res = await fetch('http://localhost:5000/api/history');
         const data = await res.json();
-        setRows(data);
+        setRows(Array.isArray(data) ? data : []);
+        setFilteredRows(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error(error);
       }
     };
     fetchHistory();
   }, []);
+
+  const applyFilters = () => {
+    const from = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
+    const to = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
+
+    const next = rows.filter((r) => {
+      const ts = r.timestamp ? new Date(r.timestamp) : null;
+      if (from && ts && ts < from) return false;
+      if (to && ts && ts > to) return false;
+
+      if (classFilter !== 'Tümü' && r.predicted_class !== classFilter) return false;
+
+      if (confidenceFilter === '<70') {
+        if (!(typeof r.confidence === 'number' && r.confidence < 0.7)) return false;
+      }
+      if (confidenceFilter === '>=70') {
+        if (!(typeof r.confidence === 'number' && r.confidence >= 0.7)) return false;
+      }
+
+      return true;
+    });
+
+    setFilteredRows(next);
+  };
 
   return (
     <div>
@@ -26,27 +56,35 @@ export default function History() {
         <div className="flex-gap" style={{alignItems: 'flex-end'}}>
           <div style={{flex: 1}}>
             <label style={{display: 'block', fontSize: '12px', marginBottom: '4px', fontWeight: 600}}>Tarih Aralığı</label>
-            <input type="date" className="input-field" />
+            <div className="flex-gap">
+              <input type="date" className="input-field" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <input type="date" className="input-field" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
           </div>
           <div style={{flex: 1}}>
             <label style={{display: 'block', fontSize: '12px', marginBottom: '4px', fontWeight: 600}}>Sınıf</label>
-            <select className="input-field">
-              <option>Tümü</option>
-              <option>5AA</option>
-              <option>4AA</option>
-              <option>3CC</option>
+            <select className="input-field" value={classFilter} onChange={(e) => setClassFilter(e.target.value)}>
+              <option value="Tümü">Tümü</option>
+              <option value="3AA">3AA</option>
+              <option value="3CC">3CC</option>
+              <option value="4AA">4AA</option>
+              <option value="Cleavage">Cleavage</option>
             </select>
           </div>
           <div style={{flex: 1}}>
             <label style={{display: 'block', fontSize: '12px', marginBottom: '4px', fontWeight: 600}}>Güven Eşiği</label>
-            <select className="input-field">
-              <option>Tümü</option>
-              <option>&lt; %70 (Uyarılı)</option>
-              <option>&ge; %70 (Güvenilir)</option>
+            <select className="input-field" value={confidenceFilter} onChange={(e) => setConfidenceFilter(e.target.value)}>
+              <option value="Tümü">Tümü</option>
+              <option value="<70">&lt; %70 (Uyarılı)</option>
+              <option value=">=70">&ge; %70 (Güvenilir)</option>
             </select>
           </div>
           <div>
-            <button className="btn-secondary" style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+            <button
+              className="btn-secondary"
+              onClick={applyFilters}
+              style={{display: 'flex', alignItems: 'center', gap: '8px'}}
+            >
               <Filter size={16} /> Filtrele
             </button>
           </div>
@@ -68,7 +106,7 @@ export default function History() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, idx) => (
+            {filteredRows.map((r, idx) => (
               <tr key={idx}>
                 <td>#{r.id}</td>
                 <td>{r.timestamp.split('T')[0]}</td>
@@ -92,7 +130,7 @@ export default function History() {
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && (
+            {filteredRows.length === 0 && (
               <tr>
                 <td colSpan="8" style={{textAlign: 'center', padding: '32px'}}>Kayıt bulunamadı.</td>
               </tr>

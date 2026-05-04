@@ -214,35 +214,143 @@ def export_csv():
 
 @app.route("/api/export.pdf")
 def export_pdf():
-    """Minimal PDF report of all stored predictions."""
+    """PDF report of stored predictions (with images)."""
     try:
         from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
-                                        Paragraph, Spacer)
+        from reportlab.platypus import (
+            SimpleDocTemplate,
+            Table,
+            TableStyle,
+            Paragraph,
+            Spacer,
+            Image as RLImage,
+            PageBreak,
+        )
         from reportlab.lib import colors
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
     except ImportError:
         abort(500, "reportlab is not installed; run `pip install reportlab`.")
 
+    # ---- Font: ensure Turkish characters render properly (ç, ğ, ı, İ, ö, ş, ü)
+    font_name = "Helvetica"
+    try:
+        candidates = [
+            Path("C:/Windows/Fonts/DejaVuSans.ttf"),
+            Path("C:/Windows/Fonts/dejavusans.ttf"),
+            Path("C:/Windows/Fonts/arial.ttf"),
+            Path("C:/Windows/Fonts/Arial.ttf"),
+            # common in python envs
+            Path(sys.prefix) / "Lib" / "site-packages" / "matplotlib" / "mpl-data" / "fonts" / "ttf" / "DejaVuSans.ttf",
+        ]
+        font_path = next((p for p in candidates if p.exists()), None)
+        if font_path is not None:
+            pdfmetrics.registerFont(TTFont("DeepEmbryoSans", str(font_path)))
+            font_name = "DeepEmbryoSans"
+    except Exception:
+        # Fall back to Helvetica if font registration fails
+        font_name = "Helvetica"
+
     rows = db.list_all(limit=10_000)
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, title="DeepEmbryo Tahmin Geçmişi")
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        title="DeepEmbryo Tahmin Geçmişi",
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm,
+    )
     styles = getSampleStyleSheet()
-    elems = [Paragraph("DeepEmbryo — Tahmin Geçmişi", styles["Title"]),
-             Spacer(1, 12)]
+    title_style = ParagraphStyle(
+        "deepembryo_title",
+        parent=styles["Title"],
+        fontName=font_name,
+    )
+    normal_style = ParagraphStyle(
+        "deepembryo_normal",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=9,
+        leading=11,
+    )
+    small_style = ParagraphStyle(
+        "deepembryo_small",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=8,
+        leading=10,
+    )
+
+    def _img_cell(path: Path, w_cm: float = 3.4, h_cm: float = 3.4):
+        """Return a small image for the table cell; empty string if missing."""
+        try:
+            if not path.exists():
+                return ""
+            img = RLImage(str(path))
+            img.drawWidth = w_cm * cm
+            img.drawHeight = h_cm * cm
+            return img
+        except Exception:
+            return ""
+
+    # Summary header
+    total = len(rows)
+    warn_n = sum(1 for r in rows if int(r["warning_flag"]) == 1) if rows else 0
+    elems = [
+        Paragraph("DeepEmbryo — Tahmin Geçmişi Raporu", title_style),
+        Spacer(1, 6),
+        Paragraph(f"Toplam kayıt: <b>{total}</b> &nbsp;&nbsp;|&nbsp;&nbsp; Uyarılı (güven &lt; 0.70): <b>{warn_n}</b>", normal_style),
+        Spacer(1, 10),
+    ]
+
     if rows:
-        cols = ["id", "timestamp", "image_filename", "predicted_class",
-                "confidence", "warning_flag", "actual_class", "pregnancy_outcome"]
-        data = [cols] + [[("" if r[c] is None else str(r[c])) for c in cols] for r in rows]
-        t = Table(data, repeatRows=1)
+        # Show most recent first, with thumbnails.
+        cols = ["ID", "Tarih/Saat", "Dosya", "Tahmin", "Güven", "Uyarı", "Orijinal", "Grad-CAM", "Gerçek", "Sonuç"]
+        data = [cols]
+
+        static_root = APP_ROOT / "static"
+        for r in rows:
+            image_path = static_root / "uploads" / r["image_filename"]
+            gradcam_rel = r["gradcam_path"]
+            gradcam_path = static_root / Path(gradcam_rel) if gradcam_rel else None
+
+            data.append([
+                str(r["id"]),
+                str(r["timestamp"]),
+                str(r["image_filename"]),
+                str(r["predicted_class"]),
+                f"{float(r['confidence']):.3f}" if r["confidence"] is not None else "",
+                "Evet" if int(r["warning_flag"]) == 1 else "Hayır",
+                _img_cell(image_path),
+                _img_cell(gradcam_path) if gradcam_path else "",
+                "" if r["actual_class"] is None else str(r["actual_class"]),
+                "" if r["pregnancy_outcome"] is None else str(r["pregnancy_outcome"]),
+            ])
+
+        col_widths = [1.0 * cm, 2.3 * cm, 3.2 * cm, 1.4 * cm, 1.4 * cm, 1.2 * cm, 3.6 * cm, 3.6 * cm, 1.4 * cm, 1.6 * cm]
+        t = Table(data, repeatRows=1, colWidths=col_widths)
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("FONTNAME", (0, 0), (-1, -1), font_name),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("FONTSIZE", (0, 1), (-1, -1), 7),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+            ("ALIGN", (0, 1), (5, -1), "CENTER"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightcyan]),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
         ]))
         elems.append(t)
+        elems.append(Spacer(1, 8))
+        elems.append(Paragraph("Not: Görseller, ilgili kayıt sırasında saklanan dosyalardan üretilir. Silinmişse raporda boş görünür.", small_style))
     else:
-        elems.append(Paragraph("Henüz tahmin kaydı yok.", styles["Normal"]))
+        elems.append(Paragraph("Henüz tahmin kaydı yok.", normal_style))
     doc.build(elems)
     buf.seek(0)
     return Response(buf.read(), mimetype="application/pdf",
