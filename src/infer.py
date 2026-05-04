@@ -10,7 +10,7 @@ import torch
 
 from . import config as cfg
 from .evaluate import load_checkpoint
-from .gradcam import generate_gradcam
+from .gradcam import generate_gradcam, _imread_any
 
 
 @dataclass
@@ -48,7 +48,9 @@ class EmbryoPredictor:
         )
 
         # Re-run a clean forward to grab the full probability vector
-        image = cv2.imread(str(image_path))
+        image = _imread_any(image_path)
+        if image is None:
+            raise RuntimeError(f"Failed to load {image_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (cfg.IMG_SIZE, cfg.IMG_SIZE)).astype(np.float32) / 255.0
         image = (image - cfg.IMAGENET_MEAN) / cfg.IMAGENET_STD

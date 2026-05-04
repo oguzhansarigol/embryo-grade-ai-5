@@ -23,3 +23,11 @@ env/
 
 # Local outputs (keep repo lean)
 outputs/
+
+# Flask demo runtime files
+app/static/uploads/
+app/static/gradcam/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/

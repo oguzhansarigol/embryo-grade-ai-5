@@ -12,4 +12,5 @@ seaborn>=0.13.0
 grad-cam>=1.5.0
 tqdm>=4.66.0
 flask>=3.0.0
+flask-cors>=4.0.0
 reportlab>=4.0.0

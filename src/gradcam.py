@@ -14,6 +14,22 @@ from . import config as cfg
 from .model import find_gradcam_target_layer
 
 
+def _imread_any(path: Path) -> np.ndarray | None:
+    """Robust imread for Windows unicode paths.
+
+    OpenCV can intermittently fail on Windows when the path contains non-ASCII
+    characters. `np.fromfile` + `cv2.imdecode` is more reliable.
+    """
+    path = Path(path)
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, cv2.IMREAD_COLOR)
+    except Exception:
+        return cv2.imread(str(path))
+
+
 def _convnext_reshape(tensor: torch.Tensor) -> torch.Tensor:
     """ConvNeXt's stage outputs are (B, C, H, W) so no reshape is needed."""
     return tensor
@@ -45,7 +61,7 @@ def generate_gradcam(model: nn.Module, image_path: Path, device: torch.device,
 
     Returns: (overlay_rgb_uint8, predicted_class_idx, predicted_confidence).
     """
-    image_bgr = cv2.imread(str(image_path))
+    image_bgr = _imread_any(image_path)
     if image_bgr is None:
         raise RuntimeError(f"Failed to load {image_path}")
     tensor, raw_float = _preprocess_for_cam(image_bgr)
@@ -65,7 +81,12 @@ def generate_gradcam(model: nn.Module, image_path: Path, device: torch.device,
 
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(save_path), cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
+        bgr = cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
+        ok, buf = cv2.imencode(".png", bgr)
+        if not ok:
+            raise RuntimeError("Failed to encode Grad-CAM PNG")
+        # More reliable than cv2.imwrite on Windows unicode paths
+        buf.tofile(str(save_path))
 
     return overlay, pred_idx, pred_conf
 
@@ -77,7 +98,7 @@ def gradcam_attention_centrality(model: nn.Module, image_path: Path,
     A high value means the model is attending to the embryo body (centre of the
     petri dish) rather than peripheral artefacts. Used in the morphology report.
     """
-    image_bgr = cv2.imread(str(image_path))
+    image_bgr = _imread_any(image_path)
     tensor, _ = _preprocess_for_cam(image_bgr)
     tensor = tensor.to(device)
 
