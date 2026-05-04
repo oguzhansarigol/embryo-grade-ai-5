@@ -1,0 +1,25 @@
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# ML artifacts / large binaries
+*.pth
+*.pt
+*.onnx
+
+# Local outputs (keep repo lean)
+outputs/
