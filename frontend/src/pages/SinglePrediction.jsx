@@ -112,7 +112,12 @@ export default function SinglePrediction() {
             
             <div style={{marginTop: '24px', padding: '16px', backgroundColor: 'var(--bg-color)', borderRadius: '6px'}}>
               <h4 style={{marginBottom: '8px', fontSize: '14px'}}>Morfolojik Özellik Raporu</h4>
-              <p style={{fontSize: '13px'}}>Simetri: Uygun<br/>Fragmentasyon: Düşük<br/>Vakuol Varlığı: Gözlemlenmedi<br/><br/><i>Model ağırlıklı olarak trofektoderm hücre yapısına odaklanmıştır.</i></p>
+              <p style={{fontSize: '13px'}}>
+                Simetri: Uygun<br/>
+                Fragmentasyon: Düşük<br/>
+                Vakuol Varlığı: Gözlemlenmedi<br/><br/>
+                <i>{result.focus_hint || 'Model odağı (ICM/TE) belirlenemedi.'}</i>
+              </p>
             </div>
           </div>
         ) : (

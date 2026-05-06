@@ -109,6 +109,7 @@ def predict_page():
                 "confidence": pred.confidence,
                 "warning": pred.warning,
                 "probabilities": pred.probabilities,
+                "focus_hint": getattr(pred, "focus_hint", None),
             }
         )
 
@@ -168,6 +169,7 @@ def api_predict():
             "confidence": pred.confidence,
             "warning": pred.warning,
             "probabilities": pred.probabilities,
+            "focus_hint": getattr(pred, "focus_hint", None),
         })
 
     if not results:

@@ -10,7 +10,7 @@ import torch
 
 from . import config as cfg
 from .evaluate import load_checkpoint
-from .gradcam import generate_gradcam, _imread_any
+from .gradcam import generate_gradcam, gradcam_focus_hint, _imread_any
 
 
 @dataclass
@@ -21,6 +21,7 @@ class Prediction:
     warning: Optional[str]
     probabilities: dict
     gradcam_path: Optional[str] = None
+    focus_hint: Optional[str] = None
 
 
 def _warning_for(confidence: float) -> Optional[str]:
@@ -46,6 +47,7 @@ class EmbryoPredictor:
         overlay, pred_idx, pred_conf = generate_gradcam(
             self.model, image_path, self.device, save_path=gradcam_save_path,
         )
+        focus = gradcam_focus_hint(self.model, image_path, self.device, target_class=pred_idx)
 
         # Re-run a clean forward to grab the full probability vector
         image = _imread_any(image_path)
@@ -66,6 +68,7 @@ class EmbryoPredictor:
             warning=_warning_for(pred_conf),
             probabilities=prob_dict,
             gradcam_path=str(gradcam_save_path) if gradcam_save_path else None,
+            focus_hint=focus,
         )
 
     def predict_batch(self, folder: Path,
